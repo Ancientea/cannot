@@ -241,7 +241,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
-    dataset = ArknightsDataset('arknights.csv')
+    dataset = ArknightsDataset('data/arknights.csv')
     train_indices, val_indices = train_test_split(
         range(len(dataset)), test_size=0.1, random_state=config['seed']
     )

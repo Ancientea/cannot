@@ -326,13 +326,27 @@ class ArknightsApp:
             self.auto_fetch_running = False
             self.auto_fetch_button.config(text="自动获取数据")
             self.update_statistics()  # 更新统计信息
+            self.save_statistics_to_log()  # 保存统计信息到log.txt
 
     def auto_fetch_loop(self):
         while self.auto_fetch_running:
-            self.auto_fetch_data()
-            self.update_statistics()  # 更新统计信息
-            elapsed_time = time.time() - self.start_time
-            if self.training_duration != -1 and elapsed_time >= self.training_duration:
+            try:
+                self.auto_fetch_data()
+                self.update_statistics()  # 更新统计信息
+                elapsed_time = time.time() - self.start_time
+                if self.training_duration != -1 and elapsed_time >= self.training_duration:
+                    self.auto_fetch_running = False
+                    self.auto_fetch_button.config(text="自动获取数据")
+                    self.save_statistics_to_log()  # 保存统计信息到log.txt
+                    break
+                time.sleep(2)
+                if keyboard.is_pressed('esc'):
+                    self.auto_fetch_running = False
+                    self.auto_fetch_button.config(text="自动获取数据")
+                    self.save_statistics_to_log()  # 保存统计信息到log.txt
+                    break
+            except Exception as e:
+                print(f"自动获取数据出错: {str(e)}")
                 self.auto_fetch_running = False
                 self.auto_fetch_button.config(text="自动获取数据")
                 self.save_statistics_to_log()  # 保存统计信息到log.txt

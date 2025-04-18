@@ -31,6 +31,27 @@ relative_regions = [
 ]
 
 
+def save_number_image(number, processed, mon_id):
+    """保存数字图片到对应文件夹
+    Args:
+        number: 识别出的数字
+        processed: 处理后的图片
+        mon_id: 怪物ID
+    """
+    if number and mon_id != 0:
+        # 创建数字对应的文件夹
+        num_folder = os.path.join("images", "nums", str(number))
+        if not os.path.exists(num_folder):
+            os.makedirs(num_folder)
+
+        # 获取文件夹中已有的图片数量
+        existing_files = [f for f in os.listdir(num_folder) if f.endswith('.png')]
+        next_index = len(existing_files) + 1
+
+        # 保存图片，命名为 id_序号.png
+        save_path = os.path.join(num_folder, f"{mon_id}_{next_index}.png")
+        cv2.imwrite(save_path, processed)
+
 def mouse_callback(event, x, y, flags, param):
     global roi_box, drawing
     if event == cv2.EVENT_LBUTTONDOWN:
@@ -90,20 +111,82 @@ def preprocess(img):
 
 
 def find_best_match(target, ref_images):
+    """
+    结合灰度匹配和RGB通道匹配，找到最佳匹配的参考图像
+    :param target: 目标图像
+    :param ref_images: 参考图像字典 {id: image}
+    :return: (最佳匹配的id, 最小差异值)
+    """
     min_diff = float('inf')
     best_id = -1
-    target_pre = preprocess(target)
 
+    # 确保目标图像是RGB格式
+    if len(target.shape) == 2:
+        target = cv2.cvtColor(target, cv2.COLOR_GRAY2BGR)
+
+    # 1. 灰度匹配
+    target_gray = cv2.cvtColor(target, cv2.COLOR_BGR2GRAY)
+    target_gray = cv2.GaussianBlur(target_gray, (3, 3), 0)
+    _, target_gray = cv2.threshold(target_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # 2. RGB通道匹配
+    target_r = target[:, :, 0]
+    target_g = target[:, :, 1]
+    target_b = target[:, :, 2]
+
+    # 对每个通道进行高斯模糊和二值化
+    for channel in [target_r, target_g, target_b]:
+        channel = cv2.GaussianBlur(channel, (3, 3), 0)
+        _, channel = cv2.threshold(channel, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    
     for img_id, ref_img in ref_images.items():
         try:
+            # 确保参考图像是RGB格式
+            if len(ref_img.shape) == 2:
+                ref_img = cv2.cvtColor(ref_img, cv2.COLOR_GRAY2BGR)
+
+            # 调整参考图像大小以匹配目标图像
             ref_resized = cv2.resize(ref_img, (target.shape[1], target.shape[0]))
-            ref_pre = preprocess(ref_resized)
-            diff = cv2.absdiff(target_pre, ref_pre)
-            diff_value = np.sum(diff) / target.size
-            if diff_value < min_diff:
-                min_diff = diff_value
+
+            # 1. 灰度匹配
+            ref_gray = cv2.cvtColor(ref_resized, cv2.COLOR_BGR2GRAY)
+            ref_gray = cv2.GaussianBlur(ref_gray, (3, 3), 0)
+            _, ref_gray = cv2.threshold(ref_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            diff_gray = cv2.absdiff(target_gray, ref_gray)
+            diff_value_gray = np.sum(diff_gray) / target.size
+
+            # 2. RGB通道匹配
+            ref_r = ref_resized[:, :, 0]
+            ref_g = ref_resized[:, :, 1]
+            ref_b = ref_resized[:, :, 2]
+
+            # 对每个通道进行高斯模糊和二值化
+            for channel in [ref_r, ref_g, ref_b]:
+                channel = cv2.GaussianBlur(channel, (3, 3), 0)
+                _, channel = cv2.threshold(channel, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+            # 分别计算RGB三个通道的差异
+            diff_r = cv2.absdiff(target_r, ref_r)
+            diff_g = cv2.absdiff(target_g, ref_g)
+            diff_b = cv2.absdiff(target_b, ref_b)
+
+            # 计算每个通道的差异值
+            diff_value_r = np.sum(diff_r) / target.size
+            diff_value_g = np.sum(diff_g) / target.size
+            diff_value_b = np.sum(diff_b) / target.size
+
+            # 综合所有差异值（灰度匹配权重0.4，RGB通道匹配权重各0.2）
+            total_diff = (diff_value_gray * 0.4 +
+                          diff_value_r * 0.2 +
+                          diff_value_g * 0.2 +
+                          diff_value_b * 0.2)
+
+            if total_diff < min_diff:
+                min_diff = total_diff
                 best_id = img_id
-        except:
+
+        except Exception as e:
+            print(f"处理参考图像 {img_id} 时出错: {str(e)}")
             continue
 
     return best_id, min_diff
@@ -144,6 +227,7 @@ def process_regions(main_roi, ref_images, screenshot=None):
             # cv2.waitKey(0)  # 等待用户按键
             # cv2.destroyAllWindows()  # 关闭所有窗口
 
+
             custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789x×X'
             number = pytesseract.image_to_string(processed, config=custom_config).strip()
             number = number.replace('×', 'x').lower()  # 统一符号
@@ -155,12 +239,9 @@ def process_regions(main_roi, ref_images, screenshot=None):
             # 只保留数字
             number = ''.join(filter(str.isdigit, number))
 
-            # 保存有数字的图片到images/nums，命名为数字，重复的直接覆盖
+            # 保存有数字的图片到images/nums中的对应文件夹
             if number:
-                save_path = f"images/nums/{number}.png"
-                if not os.path.exists("images/nums"):
-                    os.makedirs("images/nums")
-                cv2.imwrite(save_path, processed)
+                save_number_image(number, processed, matched_id)
 
             results.append({
                 "region_id": idx,
@@ -177,7 +258,6 @@ def process_regions(main_roi, ref_images, screenshot=None):
 
     return results
 
-
 def load_ref_images(ref_dir="images"):
     """加载参考图片库"""
     ref_images = {}
@@ -188,7 +268,6 @@ def load_ref_images(ref_dir="images"):
             if img is not None:
                 ref_images[i] = img
     return ref_images
-
 
 if __name__ == "__main__":
     print("请用鼠标拖拽选择主区域...")
