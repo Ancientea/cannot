@@ -24,7 +24,7 @@
 
 ```bash
 git clone [https://github.com/Ancientea/cannot]
-cd [项目目录]
+cd [项目目录。]
 ```
 
 2. 安装依赖：
