@@ -1,23 +1,53 @@
+import os
 import subprocess
 import time
 
 import cv2
+import psutil
 
-# 全局变量
-adb_path = r'C:\leidian\LDPlayer9\adb.exe'
-device_serial = '127.0.0.1:55511'  # 指定设备序列号
-process_images = [cv2.imread(f'images/process/{i}.png') for i in range(9)]
+
+def get_adb_path():
+    # 模拟器进程名
+    leidian_process_names = [
+        'dnplayer.exe',  # 雷电模拟器
+        'MuMuPlayer.exe'
+    ]
+
+    # 通过进程查找
+    for proc in psutil.process_iter(['name', 'exe']):
+        try:
+            if proc.info['name'] in leidian_process_names:
+                emulator_exe = proc.info['exe']
+                install_dir = os.path.dirname(emulator_exe)
+                adb_path = os.path.join(install_dir, 'adb.exe')
+
+                if os.path.isfile(adb_path):
+                    return adb_path
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    raise FileNotFoundError("无法自动找到模拟器ADB路径，请手动指定")
+
+
+if get_adb_path() is None:
+    adb_path = r'D:\LDPlayer9\adb.exe'  # 手动指定位置
+else:
+    adb_path = get_adb_path()
+print(f"ADB路径: {adb_path}")
+
+device_serial = '127.0.0.1:5555'  # 指定设备序列号
+process_images = [cv2.imread(f'images/process/{i}.png') for i in range(13)]
 
 # 屏幕分辨率
 screen_width = 1920
 screen_height = 1080
 
 relative_points = [
-    (0.453, 0.95),  # 投资左
-    (0.779, 0.95),  # 投资右
-    (0.322, 0.88),  # 省点饭钱
-    (0.864, 0.88),  # 敬请见证
-    (0.864, 0.90)  # 下一轮
+    (0.9297, 0.8833),  # 右ALL、返回主页、加入赛事、开始游戏
+    (0.0713, 0.8833),  # 左ALL
+    (0.8281, 0.8833),  # 右礼物、自娱自乐
+    (0.1640, 0.8833),  # 左礼物
+    (0.4979, 0.6324),  # 本轮观望
 ]
 
 
@@ -65,10 +95,34 @@ def click(point):
     subprocess.run(f'{adb_path} -s {device_serial} shell input tap {x_coord} {y_coord}', shell=True)
 
 
+def operation_simple(results):
+    for idx, score in results:
+        if score > 0.6:  # 假设匹配阈值为 0.8
+            if idx == 0:  # 加入赛事
+                click(relative_points[0])
+                print("加入赛事")
+            elif idx == 1:  # 自娱自乐
+                click(relative_points[2])
+                print("自娱自乐")
+            elif idx == 2:  # 开始游戏
+                click(relative_points[0])
+                print("开始游戏")
+            elif idx in [3, 4, 5]:  # 本轮观望
+                click(relative_points[4])
+                print("本轮观望")
+            elif idx in [10, 11]:
+                print("下一轮")
+            elif idx in [6, 7]:
+                print("等待战斗结束")
+            elif idx == 12:  # 返回主页
+                click(relative_points[0])
+                print("返回主页")
+            break  # 匹配到第一个结果后退出
+
 def operation(results):
     for idx, score in results:
         if score > 0.6:  # 假设匹配阈值为 0.8
-            if idx == 0:
+            if idx in [3, 4, 5]:
                 # 识别怪物类型数量，导入模型进行预测
                 prediction = 0.6
                 # 根据预测结果点击投资左/右
@@ -91,7 +145,6 @@ def operation(results):
             elif idx == 6:
                 print("等待战斗结束")
             break  # 匹配到第一个结果后退出
-
 
 def main():
     while True:

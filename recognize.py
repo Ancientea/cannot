@@ -12,22 +12,22 @@ pytesseract.pytesseract.tesseract_cmd = r'Tesseract-OCR\tesseract.exe'
 drawing = False
 roi_box = []
 
-# 预定义相对坐标（基于选定的大区域）
-# relative_regions = [
-#     (0.334, 0.783, 0.407, 0.911),
-#     (0.416, 0.781, 0.490, 0.918),
-#     (0.498, 0.785, 0.573, 0.920),
-#     (0.661, 0.785, 0.737, 0.916),
-#     (0.742, 0.779, 0.818, 0.916),
-#     (0.826, 0.783, 0.900, 0.916)
-# ]
+# 预定义相对坐标
+relative_regions_nums = [
+    (0.0, 0.0, 0.1324, 1),
+    (0.1324, 0.0, 0.2571, 1),
+    (0.2461, 0.0, 0.3778, 1),
+    (0.6260, 0.0, 0.7429, 1),
+    (0.7500, 0.0, 0.8746, 1),
+    (0.8646, 0.0, 1, 1)
+]
 relative_regions = [
-    (0.0, 0.0, 0.131, 1),
-    (0.1462, 0.0, 0.2762, 1),
-    (0.2923, 0.0, 0.4214, 1),
-    (0.5786, 0.0, 0.7087, 1),
-    (0.7248, 0.0, 0.8538, 1),
-    (0.8679, 0.0, 1, 1)
+    (0.0, 0.0, 0.1173, 1),
+    (0.1220, 0.0, 0.2390, 1),
+    (0.2451, 0.0, 0.3624, 1),
+    (0.6359, 0.0, 0.7532, 1),
+    (0.7593, 0.0, 0.8759, 1),
+    (0.8824, 0.0, 1, 1)
 ]
 
 
@@ -103,11 +103,32 @@ def select_roi():
 
 
 def preprocess(img):
-    """优化的预处理流程"""
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    return thresh
+    """彩色图像二值化处理，增强数字可见性"""
+    # 检查图像是否为彩色
+    if len(img.shape) == 2:
+        # 如果是灰度图像，转换为三通道
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+    # 创建较宽松的亮色阈值范围（包括浅灰、白色等亮色）
+    # BGR格式
+    lower_bright = np.array([180, 180, 180])
+    upper_bright = np.array([255, 255, 255])
+
+    # 基于颜色范围创建掩码
+    bright_mask = cv2.inRange(img, lower_bright, upper_bright)
+
+    # 进行形态学操作，增强文本可见性
+    # 创建一个小的椭圆形核
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+
+    # 膨胀操作，使文字更粗
+    dilated = cv2.dilate(bright_mask, kernel, iterations=1)
+
+    # 闭操作，填充文字内的小空隙
+    # closed = cv2.morphologyEx(dilated, cv2.MORPH_CLOSE, kernel)
+    closed = dilated
+
+    return closed
 
 
 def find_best_match(target, ref_images):
@@ -119,6 +140,10 @@ def find_best_match(target, ref_images):
     """
     min_diff = float('inf')
     best_id = -1
+
+    # cv2.imshow("target", target)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
 
     # 确保目标图像是RGB格式
     if len(target.shape) == 2:
@@ -193,6 +218,16 @@ def find_best_match(target, ref_images):
 
 
 def process_regions(main_roi, ref_images, screenshot=None):
+    """处理主区域中的所有区域
+
+    Args:
+        main_roi: 主要感兴趣区域的坐标
+        ref_images: 参考图像字典
+        screenshot: 可选的预先捕获的截图
+
+    Returns:
+        区域处理结果的列表
+    """
     results = []
     (x1, y1), (x2, y2) = main_roi
     main_width = x2 - x1
@@ -206,43 +241,62 @@ def process_regions(main_roi, ref_images, screenshot=None):
         # 从当前screenshot中提取主区域
         screenshot = screenshot[y1:y2, x1:x2]
 
+    # 遍历所有区域
     for idx, rel in enumerate(relative_regions):
         try:
-            # 计算子区域坐标
+            # 计算模板匹配的子区域坐标
             rx1 = int(rel[0] * main_width)
             ry1 = int(rel[1] * main_height)
             rx2 = int(rel[2] * main_width)
             ry2 = int(rel[3] * main_height)
 
+            # 提取模板匹配用的子区域
             sub_roi = screenshot[ry1:ry2, rx1:rx2]
 
             # 图像匹配
             matched_id, confidence = find_best_match(sub_roi, ref_images)
 
-            # OCR识别（优化区域截取）
-            number_roi = sub_roi[-sub_roi.shape[0] // 4:, sub_roi.shape[1] // 3:]
+            # 计算OCR数字识别的子区域坐标
+            rel_num = relative_regions_nums[idx]
+            rx1_num = int(rel_num[0] * main_width)
+            ry1_num = int(rel_num[1] * main_height)
+            rx2_num = int(rel_num[2] * main_width)
+            ry2_num = int(rel_num[3] * main_height)
+
+            # 提取OCR识别用的子区域
+            sub_roi_num = screenshot[ry1_num:ry2_num, rx1_num:rx2_num]
+
+            # OCR识别（根据区域位置优化区域截取）
+            # 前3个区域（左侧）使用右下角，后3个区域（右侧）使用左下角
+            bottom_section = sub_roi_num[-sub_roi_num.shape[0] // 4:]
+            if idx < 3:  # 左侧区域 - 使用右半部分
+                number_roi = bottom_section[:, bottom_section.shape[1] // 3:]
+            else:  # 右侧区域 - 使用左半部分
+                number_roi = bottom_section[:, :bottom_section.shape[1] // 3 * 2]
+            
             processed = preprocess(number_roi)
 
             # cv2.imshow("Processed", processed)
             # cv2.waitKey(0)  # 等待用户按键
             # cv2.destroyAllWindows()  # 关闭所有窗口
 
-
+            # OCR处理
             custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789x×X'
             number = pytesseract.image_to_string(processed, config=custom_config).strip()
             number = number.replace('×', 'x').lower()  # 统一符号
-            # print(f"区域{idx} OCR识别结果: {number}")
+
             # 找到第一个x的位置并截取后续内容
             x_pos = number.find('x')
             if x_pos != -1:
                 number = number[x_pos + 1:]  # 截取x之后的字符串
+
             # 只保留数字
             number = ''.join(filter(str.isdigit, number))
 
             # 保存有数字的图片到images/nums中的对应文件夹
-            if number:
-                save_number_image(number, processed, matched_id)
-
+            # if number:
+            #     save_number_image(number, processed, matched_id)
+            
             results.append({
                 "region_id": idx,
                 "matched_id": matched_id,
@@ -261,7 +315,7 @@ def process_regions(main_roi, ref_images, screenshot=None):
 def load_ref_images(ref_dir="images"):
     """加载参考图片库"""
     ref_images = {}
-    for i in range(27):
+    for i in range(35):
         path = os.path.join(ref_dir, f"{i}.png")
         if os.path.exists(path):
             img = cv2.imread(path)
